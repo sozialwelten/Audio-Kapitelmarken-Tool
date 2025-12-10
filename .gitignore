@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# Audio-Dateien
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.aac
+*.ogg
+*.wma
+
+# Test-Dateien
+kapitelmarken.txt
+testdatei.*
+
+# Temporäre Dateien
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
