@@ -1,4 +1,4 @@
-# Audio Chapter Marker Tool
+# Audio Kapitelmarken Tool
 
 Ein Python-Kommandozeilen-Tool zum Einbetten von Audacity-Kapitelmarken in Audio-Dateien. Exportiert als M4A und MP3 mit vollständiger Podcast-Kapitelmarken-Unterstützung.
 
@@ -14,7 +14,7 @@ Ein Python-Kommandozeilen-Tool zum Einbetten von Audacity-Kapitelmarken in Audio
 
 ```bash
 # Repository klonen
-git clone https://github.com/yourusername/audio-chapter-tool.git
+git clone https://github.com/sozialwelten/Audio-Kapitelmarken-Tool.git
 cd audio-chapter-tool
 
 # Virtual Environment erstellen
