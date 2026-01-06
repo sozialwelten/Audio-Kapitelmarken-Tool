@@ -5,10 +5,9 @@ Ein Python-Kommandozeilen-Tool zum Einbetten von Audacity-Kapitelmarken in Audio
 ## Features
 
 - Liest Audacity Label-Dateien (.txt)
-- Bettet Kapitelmarken mit aktuellen Standards ein:
-  - **M4A**: FFMETADATA-Format (MP4-Container)
+- Bettet Kapitelmarken mit aktuellem Standard ein:
   - **MP3**: ID3v2.3 CTOC/CHAP Frames
-- Exportiert beide Formate oder einzeln
+- Exportiert im MP3 Format
 
 ## Installation
 
@@ -34,14 +33,8 @@ pip install mutagen
 ## Verwendung
 
 ```bash
-# Beide Formate erstellen
+# MP3 Format exportieren
 python chapter_tool.py audio.wav kapitel.txt
-
-# Nur M4A
-python chapter_tool.py audio.wav kapitel.txt --m4a-only
-
-# Nur MP3
-python chapter_tool.py audio.wav kapitel.txt --mp3-only
 
 # In anderes Verzeichnis exportieren
 python chapter_tool.py audio.wav kapitel.txt -o ./output
