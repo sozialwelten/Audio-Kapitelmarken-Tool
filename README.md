@@ -139,7 +139,3 @@ GPL-3.0
 ## Autor
 
 Michael Karbacher
-
-## Beiträge
-
-Issues und Pull Requests sind willkommen!
