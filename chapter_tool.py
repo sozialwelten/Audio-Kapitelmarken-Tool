@@ -120,6 +120,9 @@ def convert_to_mp3(input_file, output_file, normalize=True, target_lufs=-16):
                 '-af',
                 f'loudnorm=I={target_lufs}:TP=-1.5:LRA=11:measured_I={loudness_data["input_i"]}:measured_TP={loudness_data["input_tp"]}:measured_LRA={loudness_data["input_lra"]}:measured_thresh={loudness_data["input_thresh"]}:linear=true:print_format=summary',
                 '-codec:a', 'libmp3lame', '-q:a', '2',
+                '-write_id3v1', '0',  # Disable ID3v1
+                '-id3v2_version', '3',  # Use ID3v2.3
+                '-map_metadata', '-1',  # Clear all metadata
                 str(output_file)
             ]
         else:
@@ -129,11 +132,21 @@ def convert_to_mp3(input_file, output_file, normalize=True, target_lufs=-16):
                 'ffmpeg', '-i', str(input_file), '-y',
                 '-af', f'loudnorm=I={target_lufs}:TP=-1.5:LRA=11',
                 '-codec:a', 'libmp3lame', '-q:a', '2',
+                '-write_id3v1', '0',
+                '-id3v2_version', '3',
+                '-map_metadata', '-1',
                 str(output_file)
             ]
     else:
         # No normalization
-        cmd = ['ffmpeg', '-i', str(input_file), '-y', '-codec:a', 'libmp3lame', '-q:a', '2', str(output_file)]
+        cmd = [
+            'ffmpeg', '-i', str(input_file), '-y',
+            '-codec:a', 'libmp3lame', '-q:a', '2',
+            '-write_id3v1', '0',
+            '-id3v2_version', '3',
+            '-map_metadata', '-1',
+            str(output_file)
+        ]
 
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -150,24 +163,28 @@ def convert_to_mp3(input_file, output_file, normalize=True, target_lufs=-16):
 
 def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
     """Embed chapters in MP3 file using ID3v2 CTOC/CHAP frames"""
-    print(f"Füge Kapitelmarken zu {mp3_file.name} hinzu...")
+    print(f"\nFüge Kapitelmarken zu {mp3_file.name} hinzu...")
 
     try:
         audio = ID3(mp3_file)
-        print("  DEBUG: ID3-Tags geladen")
+        print("  DEBUG: Existierende ID3-Tags geladen")
     except:
         audio = ID3()
         print("  DEBUG: Neue ID3-Tags erstellt")
 
-    # Remove existing chapter frames
+    # Remove existing chapter frames and ffmpeg metadata
     audio.delall('CTOC')
     audio.delall('CHAP')
-    print("  DEBUG: Alte Kapitelmarken entfernt")
+    # Also remove any other metadata that might interfere
+    for key in list(audio.keys()):
+        if key.startswith('PRIV') or key.startswith('COMM'):
+            audio.delall(key)
+    print("  DEBUG: Alte Kapitelmarken und Metadaten entfernt")
 
     # Create chapter frames
     chapter_ids = []
     for i, chapter in enumerate(chapters):
-        chap_id = f'chp{i}'
+        chap_id = f'chp{i:03d}'  # Use zero-padded IDs for better sorting
         chapter_ids.append(chap_id)
 
         # Determine end time
@@ -176,7 +193,7 @@ def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
         else:
             end_ms = total_duration_ms
 
-        print(f"  DEBUG: Kapitel {i}: '{chapter['title']}' von {chapter['start_ms']}ms bis {end_ms}ms")
+        print(f"  DEBUG: Kapitel {i + 1}: '{chapter['title']}' von {chapter['start_ms']}ms bis {end_ms}ms")
 
         # Create CHAP frame
         chap = CHAP(
@@ -184,6 +201,8 @@ def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
             element_id=chap_id,
             start_time=chapter['start_ms'],
             end_time=end_ms,
+            start_offset=0xFFFFFFFF,  # Not used
+            end_offset=0xFFFFFFFF,  # Not used
             sub_frames=[
                 TIT2(encoding=3, text=[chapter['title']])
             ]
@@ -203,6 +222,7 @@ def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
     audio.add(ctoc)
     print(f"  DEBUG: CTOC mit {len(chapter_ids)} Kapiteln erstellt")
 
+    # Save with ID3v2.3 for maximum compatibility
     audio.save(mp3_file, v2_version=3)
     print(f"✓ {len(chapters)} Kapitelmarken hinzugefügt")
 
@@ -211,8 +231,11 @@ def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
     verify_audio = ID3(mp3_file)
     chap_frames = [key for key in verify_audio.keys() if key.startswith('CHAP')]
     ctoc_frames = [key for key in verify_audio.keys() if key.startswith('CTOC')]
-    print(f"  DEBUG: {len(chap_frames)} CHAP-Frames gefunden")
-    print(f"  DEBUG: {len(ctoc_frames)} CTOC-Frames gefunden")
+    print(f"  ✓ {len(chap_frames)} CHAP-Frames geschrieben")
+    print(f"  ✓ {len(ctoc_frames)} CTOC-Frame geschrieben")
+
+    if len(chap_frames) != len(chapters):
+        print(f"  ⚠ WARNUNG: Erwartet {len(chapters)} CHAP-Frames, gefunden {len(chap_frames)}", file=sys.stderr)
 
 
 def main():
@@ -262,13 +285,20 @@ def main():
 
     # Process MP3
     mp3_output = output_dir / f"{base_name}_chapters.mp3"
+
+    # First convert without chapters
     convert_to_mp3(
         args.audio_file,
         mp3_output,
         normalize=not args.no_normalize,
         target_lufs=args.target_lufs
     )
-    embed_chapters_mp3(mp3_output, chapters, total_duration_ms)
+
+    # Get duration from converted file (might be slightly different)
+    converted_duration_ms = get_audio_duration_ms(mp3_output)
+
+    # Then embed chapters into the converted file
+    embed_chapters_mp3(mp3_output, chapters, converted_duration_ms)
 
     print("\n✓ Fertig! Kapitelmarken wurden erfolgreich eingebettet.")
     if not args.no_normalize:

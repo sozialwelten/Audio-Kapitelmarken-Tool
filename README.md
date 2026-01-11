@@ -92,8 +92,8 @@ Diese Werte entsprechen den Empfehlungen der EBU R128 für Broadcasting und sind
 ## Kapitelmarken testen
 
 ```bash
-# Kapitelmarken verifizieren
-ffprobe -show-chapters datei_chapters.mp3
+# ID3-Tags mit Python/Mutagen verifizieren
+python3 -c "from mutagen.id3 import ID3; tags = ID3('datei_chapters.mp3'); print('CHAP:', [k for k in tags.keys() if k.startswith('CHAP')]); print('CTOC:', [k for k in tags.keys() if k.startswith('CTOC')])"
 
 # Lautstärke überprüfen
 ffmpeg -i datei_chapters.mp3 -af loudnorm=print_format=summary -f null -
@@ -103,10 +103,12 @@ ffmpeg -i datei_chapters.mp3 -af loudnorm=print_format=summary -f null -
 
 Die erzeugten MP3-Dateien mit Kapitelmarken funktionieren in:
 
-- **Podcast-Apps**: Apple Podcasts, Overcast, Castro, Pocket Casts, AntennaPod
-- **Media-Player**: VLC (Wiedergabe → Kapitel), foobar2000
-- **Plattformen**: Mastodon, Funkwhale, Podcasting 2.0-Apps
+- **Podcast-Apps**: Pocket Casts, Apple Podcasts, Overcast, Castro, AntennaPod
+- **Media-Player**: VLC (Wiedergabe → Kapitel), mpv, foobar2000
+- **Plattformen**: Podcasting 2.0-Apps
 - **Mobile**: iOS Music App, Android Media Player
+
+**Hinweis zu Mastodon**: Mastodon konvertiert hochgeladene Audiodateien manchmal neu, was die ID3-Kapitelmarken entfernen kann. Teste die Kapitelmarken am besten zunächst lokal in deiner Podcast-App (z.B. Pocket Casts), bevor du die Datei hochlädst. Falls Mastodon die Kapitel entfernt, prüfe die Server-Einstellungen oder nutze alternative Upload-Methoden.
 
 ## Fehlersuche
 
@@ -114,12 +116,21 @@ Das Tool gibt Debug-Informationen aus:
 - Gefundene Kapitel mit Zeitstempeln
 - Audio-Dauer in Sekunden und Millisekunden
 - Aktuelle Lautstärke vor der Normalisierung
-- Anzahl der geschriebenen ID3-Frames
+- Anzahl der geschriebenen ID3-Frames mit Details
 
 Bei Problemen:
 1. Prüfe das Audacity-Label-Format (Tab-getrennt)
 2. Stelle sicher, dass ffmpeg installiert ist: `ffmpeg -version`
-3. Verifiziere die Kapitelmarken mit ffprobe
+3. Verifiziere die ID3-Tags mit dem Mutagen-Befehl oben
+4. Teste die Datei lokal in einer Podcast-App, bevor du sie hochlädst
+
+### Kapitelmarken werden nicht angezeigt?
+
+Falls Kapitelmarken in deiner App nicht angezeigt werden:
+- Prüfe mit dem Mutagen-Befehl, ob CHAP/CTOC Frames vorhanden sind
+- Teste in verschiedenen Apps (Pocket Casts ist sehr zuverlässig)
+- Bei Mastodon-Uploads: Lade die Original-MP3 herunter und prüfe die Tags
+- Manche Apps zeigen Kapitel nur bei längeren Dateien (>5 Min) an
 
 ## Lizenz
 
@@ -128,3 +139,7 @@ GPL-3.0
 ## Autor
 
 Michael Karbacher
+
+## Beiträge
+
+Issues und Pull Requests sind willkommen!
