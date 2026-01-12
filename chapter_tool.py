@@ -219,7 +219,7 @@ def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
             TIT2(encoding=3, text=['Table of Contents'])
         ]
     )
-    audio.add(ctoc)
+    audio['CTOC:toc'] = ctoc
     print(f"  DEBUG: CTOC mit {len(chapter_ids)} Kapiteln erstellt")
 
     # Save with ID3v2.3 for maximum compatibility
