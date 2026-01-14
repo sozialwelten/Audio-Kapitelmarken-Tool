@@ -8,10 +8,9 @@ with podcast-standard loudness normalization
 import argparse
 import sys
 from pathlib import Path
-from mutagen.id3 import ID3, CTOC, CHAP, TIT2, CTOCFlags
-from mutagen.mp3 import MP3
 import subprocess
 import json
+import tempfile
 
 
 def parse_audacity_labels(label_file):
@@ -27,11 +26,11 @@ def parse_audacity_labels(label_file):
                 start_time = float(parts[0])
                 title = parts[2]
                 chapters.append({
-                    'start_ms': int(start_time * 1000),
+                    'start_sec': start_time,
                     'title': title
                 })
                 print(f"  DEBUG: Kapitel gefunden: {title} @ {start_time}s")
-    return sorted(chapters, key=lambda x: x['start_ms'])
+    return sorted(chapters, key=lambda x: x['start_sec'])
 
 
 def get_audio_duration_ms(audio_file):
@@ -65,10 +64,8 @@ def analyze_loudness(audio_file):
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        # Extract JSON from stderr (ffmpeg outputs to stderr)
         stderr = result.stderr
 
-        # Find JSON block in output
         json_start = stderr.rfind('{')
         json_end = stderr.rfind('}') + 1
 
@@ -94,11 +91,8 @@ def analyze_loudness(audio_file):
             'input_thresh': input_thresh
         }
 
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"  WARNUNG: Lautstärke-Analyse fehlgeschlagen: {e}", file=sys.stderr)
-        return None
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        print(f"  WARNUNG: Konnte Lautstärke-Daten nicht parsen: {e}", file=sys.stderr)
         return None
 
 
@@ -109,24 +103,19 @@ def convert_to_mp3(input_file, output_file, normalize=True, target_lufs=-16):
     if normalize:
         print(f"Normalisiere auf {target_lufs} LUFS (Podcast-Standard)...")
 
-        # First pass: analyze
         loudness_data = analyze_loudness(input_file)
 
         if loudness_data:
-            # Second pass: normalize with measured values
             print("Wende Lautstärke-Normalisierung an...")
             cmd = [
                 'ffmpeg', '-i', str(input_file), '-y',
-                '-af',
-                f'loudnorm=I={target_lufs}:TP=-1.5:LRA=11:measured_I={loudness_data["input_i"]}:measured_TP={loudness_data["input_tp"]}:measured_LRA={loudness_data["input_lra"]}:measured_thresh={loudness_data["input_thresh"]}:linear=true:print_format=summary',
+                '-af', f'loudnorm=I={target_lufs}:TP=-1.5:LRA=11:measured_I={loudness_data["input_i"]}:measured_TP={loudness_data["input_tp"]}:measured_LRA={loudness_data["input_lra"]}:measured_thresh={loudness_data["input_thresh"]}:linear=true:print_format=summary',
                 '-codec:a', 'libmp3lame', '-q:a', '2',
-                '-write_id3v1', '0',  # Disable ID3v1
-                '-id3v2_version', '3',  # Use ID3v2.3
-                '-map_metadata', '-1',  # Clear all metadata
+                '-write_id3v1', '0',
+                '-id3v2_version', '3',
                 str(output_file)
             ]
         else:
-            # Fallback: single-pass normalization
             print("Verwende Einzel-Pass-Normalisierung...")
             cmd = [
                 'ffmpeg', '-i', str(input_file), '-y',
@@ -134,22 +123,19 @@ def convert_to_mp3(input_file, output_file, normalize=True, target_lufs=-16):
                 '-codec:a', 'libmp3lame', '-q:a', '2',
                 '-write_id3v1', '0',
                 '-id3v2_version', '3',
-                '-map_metadata', '-1',
                 str(output_file)
             ]
     else:
-        # No normalization
         cmd = [
             'ffmpeg', '-i', str(input_file), '-y',
             '-codec:a', 'libmp3lame', '-q:a', '2',
             '-write_id3v1', '0',
             '-id3v2_version', '3',
-            '-map_metadata', '-1',
             str(output_file)
         ]
 
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
         print(f"✓ {output_file.name} erstellt")
 
         if normalize:
@@ -161,81 +147,82 @@ def convert_to_mp3(input_file, output_file, normalize=True, target_lufs=-16):
         sys.exit(1)
 
 
-def embed_chapters_mp3(mp3_file, chapters, total_duration_ms):
-    """Embed chapters in MP3 file using ID3v2 CTOC/CHAP frames"""
-    print(f"\nFüge Kapitelmarken zu {mp3_file.name} hinzu...")
+def format_time_hhmmss(seconds):
+    """Format seconds as HH:MM:SS.mmm"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+
+
+def embed_chapters_ffmpeg(mp3_file, chapters):
+    """Embed chapters using ffmpeg metadata"""
+    print(f"\nFüge Kapitelmarken mit ffmpeg hinzu...")
+
+    # Create ffmpeg metadata file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as meta_file:
+        meta_file.write(';FFMETADATA1\n')
+
+        for i, chapter in enumerate(chapters):
+            # Calculate end time
+            if i < len(chapters) - 1:
+                end_sec = chapters[i + 1]['start_sec']
+            else:
+                # Use file duration
+                duration_result = subprocess.run(
+                    ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                     '-of', 'default=noprint_wrappers=1:nokey=1', str(mp3_file)],
+                    capture_output=True, text=True, check=True
+                )
+                end_sec = float(duration_result.stdout.strip())
+
+            start_ms = int(chapter['start_sec'] * 1000)
+            end_ms = int(end_sec * 1000)
+
+            meta_file.write(f'[CHAPTER]\n')
+            meta_file.write(f'TIMEBASE=1/1000\n')
+            meta_file.write(f'START={start_ms}\n')
+            meta_file.write(f'END={end_ms}\n')
+            meta_file.write(f'title={chapter["title"]}\n')
+
+            print(f"  DEBUG: Kapitel {i+1}: '{chapter['title']}' von {start_ms}ms bis {end_ms}ms")
+
+        meta_path = meta_file.name
 
     try:
-        audio = ID3(mp3_file)
-        print("  DEBUG: Existierende ID3-Tags geladen")
-    except:
-        audio = ID3()
-        print("  DEBUG: Neue ID3-Tags erstellt")
-
-    # Remove existing chapter frames and ffmpeg metadata
-    audio.delall('CTOC')
-    audio.delall('CHAP')
-    # Also remove any other metadata that might interfere
-    for key in list(audio.keys()):
-        if key.startswith('PRIV') or key.startswith('COMM'):
-            audio.delall(key)
-    print("  DEBUG: Alte Kapitelmarken und Metadaten entfernt")
-
-    # Create chapter frames
-    chapter_ids = []
-    for i, chapter in enumerate(chapters):
-        chap_id = f'chp{i:03d}'  # Use zero-padded IDs for better sorting
-        chapter_ids.append(chap_id)
-
-        # Determine end time
-        if i < len(chapters) - 1:
-            end_ms = chapters[i + 1]['start_ms']
-        else:
-            end_ms = total_duration_ms
-
-        print(f"  DEBUG: Kapitel {i + 1}: '{chapter['title']}' von {chapter['start_ms']}ms bis {end_ms}ms")
-
-        # Create CHAP frame
-        chap = CHAP(
-            encoding=3,  # UTF-8
-            element_id=chap_id,
-            start_time=chapter['start_ms'],
-            end_time=end_ms,
-            start_offset=0xFFFFFFFF,  # Not used
-            end_offset=0xFFFFFFFF,  # Not used
-            sub_frames=[
-                TIT2(encoding=3, text=[chapter['title']])
-            ]
-        )
-        audio.add(chap)
-
-    # Create table of contents
-    ctoc = CTOC(
-        encoding=3,
-        element_id='toc',
-        flags=CTOCFlags.TOP_LEVEL | CTOCFlags.ORDERED,
-        child_element_ids=chapter_ids,
-        sub_frames=[
-            TIT2(encoding=3, text=['Table of Contents'])
+        # Apply metadata with ffmpeg
+        temp_output = mp3_file.with_suffix('.tmp.mp3')
+        cmd = [
+            'ffmpeg', '-i', str(mp3_file), '-i', meta_path,
+            '-map_metadata', '1', '-codec', 'copy',
+            '-write_id3v1', '0', '-id3v2_version', '3',
+            '-y', str(temp_output)
         ]
-    )
-    audio['CTOC:toc'] = ctoc
-    print(f"  DEBUG: CTOC mit {len(chapter_ids)} Kapiteln erstellt")
 
-    # Save with ID3v2.3 for maximum compatibility
-    audio.save(mp3_file, v2_version=3)
-    print(f"✓ {len(chapters)} Kapitelmarken hinzugefügt")
+        subprocess.run(cmd, check=True, capture_output=True)
 
-    # Verify chapters were written
-    print("\nVerifiziere geschriebene Kapitelmarken...")
-    verify_audio = ID3(mp3_file)
-    chap_frames = [key for key in verify_audio.keys() if key.startswith('CHAP')]
-    ctoc_frames = [key for key in verify_audio.keys() if key.startswith('CTOC')]
-    print(f"  ✓ {len(chap_frames)} CHAP-Frames geschrieben")
-    print(f"  ✓ {len(ctoc_frames)} CTOC-Frame geschrieben")
+        # Replace original
+        temp_output.replace(mp3_file)
+        print(f"✓ {len(chapters)} Kapitelmarken hinzugefügt")
 
-    if len(chap_frames) != len(chapters):
-        print(f"  ⚠ WARNUNG: Erwartet {len(chapters)} CHAP-Frames, gefunden {len(chap_frames)}", file=sys.stderr)
+    finally:
+        Path(meta_path).unlink(missing_ok=True)
+
+    # Verify
+    print("\nVerifiziere Kapitelmarken...")
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_chapters', str(mp3_file)],
+            capture_output=True, text=True, check=True
+        )
+        data = json.loads(result.stdout)
+        chapters_found = len(data.get('chapters', []))
+        print(f"  ✓ {chapters_found} Kapitel in der Datei gefunden")
+
+        if chapters_found != len(chapters):
+            print(f"  ⚠ WARNUNG: Erwartet {len(chapters)}, gefunden {chapters_found}", file=sys.stderr)
+    except:
+        print("  ⚠ Konnte Kapitel nicht verifizieren", file=sys.stderr)
 
 
 def main():
@@ -277,16 +264,13 @@ def main():
 
     print(f"✓ {len(chapters)} Kapitelmarken gefunden")
 
-    # Get audio duration
-    total_duration_ms = get_audio_duration_ms(args.audio_file)
-
     # Determine output base name
     base_name = args.audio_file.stem
 
     # Process MP3
     mp3_output = output_dir / f"{base_name}_chapters.mp3"
 
-    # First convert without chapters
+    # Convert to MP3
     convert_to_mp3(
         args.audio_file,
         mp3_output,
@@ -294,19 +278,16 @@ def main():
         target_lufs=args.target_lufs
     )
 
-    # Get duration from converted file (might be slightly different)
-    converted_duration_ms = get_audio_duration_ms(mp3_output)
-
-    # Then embed chapters into the converted file
-    embed_chapters_mp3(mp3_output, chapters, converted_duration_ms)
+    # Embed chapters using ffmpeg
+    embed_chapters_ffmpeg(mp3_output, chapters)
 
     print("\n✓ Fertig! Kapitelmarken wurden erfolgreich eingebettet.")
     if not args.no_normalize:
         print(f"✓ Audio auf {args.target_lufs} LUFS normalisiert")
 
     print(f"\nZum Testen der Kapitelmarken:")
-    print(f"  VLC: Wiedergabe → Kapitel")
-    print(f"  ffprobe: ffprobe -show_chapters '{mp3_output}'")
+    print(f"  ffprobe -show_chapters '{mp3_output}'")
+    print(f"  Oder teste direkt in Pocket Casts / deiner Podcast-App")
 
 
 if __name__ == '__main__':
